@@ -66,14 +66,41 @@ namespace WindowsGSM.Plugins
             {
                 StartInfo =
                 {
-                    WindowStyle = ProcessWindowStyle.Minimized,
-                    UseShellExecute = false,
                     WorkingDirectory = ServerPath.GetServersServerFiles(_serverData.ServerID),
                     FileName = ServerPath.GetServersServerFiles(_serverData.ServerID, StartPath),
-                    Arguments = param.ToString()
+                    Arguments = param,
+                    WindowStyle = ProcessWindowStyle.Minimized,
+                    UseShellExecute = false
                 },
                 EnableRaisingEvents = true
             };
+
+            // Set up Redirect Input and Output to WindowsGSM Console if EmbedConsole is on
+            if (AllowsEmbedConsole)
+            {
+                p.StartInfo.CreateNoWindow = true;
+                p.StartInfo.RedirectStandardInput = true;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.StartInfo.RedirectStandardError = true;
+                var serverConsole = new ServerConsole(_serverData.ServerID);
+                p.OutputDataReceived += serverConsole.AddOutput;
+                p.ErrorDataReceived += serverConsole.AddOutput;
+
+                // Start Process
+                try
+                {
+                    p.Start();
+                }
+                catch (Exception e)
+                {
+                    Error = e.Message;
+                    return null; // return null if fail to start
+                }
+
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
+                return p;
+            }
 
             // Start Process
             try
@@ -83,13 +110,40 @@ namespace WindowsGSM.Plugins
             }
             catch (Exception e)
             {
-                base.Error = e.Message;
+                Error = e.Message;
                 return null; // return null if fail to start
             }
         }
 
 
-        // - Stop server function
-        public async Task Stop(Process p) => await Task.Run(() => { p.Kill(); }); // I believe FrozenFlame don't have a proper way to stop the server so just kill it
+		// - Stop server function
+        public async Task Stop(Process p)
+        {
+            await Task.Run(() =>
+            {
+                if (p.StartInfo.CreateNoWindow)
+                {
+                    Functions.ServerConsole.SetMainWindow(p.MainWindowHandle);
+                    Functions.ServerConsole.SendWaitToMainWindow("^c");
+					
+                }
+                else
+                {
+                    Functions.ServerConsole.SetMainWindow(p.MainWindowHandle);
+                    Functions.ServerConsole.SendWaitToMainWindow("^c");
+                }
+            });
+			await Task.Delay(20000);
+        }
+
+// fixes WinGSM bug, https://github.com/WindowsGSM/WindowsGSM/issues/57#issuecomment-983924499
+        public async Task<Process> Update(bool validate = false, string custom = null)
+        {
+            var (p, error) = await Installer.SteamCMD.UpdateEx(serverData.ServerID, AppId, validate, custom: custom, loginAnonymous: loginAnonymous);
+            Error = error;
+            await Task.Run(() => { p.WaitForExit(); });
+            return p;
+        }
+
     }
 }
